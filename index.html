@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Promillelaskuri Pro - Nollapiste</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #eef2f3; padding: 20px; color: #333; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; background: #f9f9f9; padding: 20px; border-radius: 10px; }
+        label { display: block; font-weight: 600; margin-bottom: 8px; font-size: 0.9em; }
+        input, select, button { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        button { background: #3498db; color: white; border: none; cursor: pointer; font-weight: bold; margin-top: 10px; }
+        button:hover { background: #2980b9; }
+        .btn-add { background: #95a5a6; margin-bottom: 20px; }
+        .btn-calc { background: #27ae60; font-size: 1.1em; }
+        .drink-row { display: flex; gap: 10px; margin-bottom: 15px; padding: 10px; background: #fff; border: 1px dashed #bbb; border-radius: 8px; }
+        .result-box { text-align: center; margin: 25px 0; padding: 20px; border-radius: 10px; display: none; background: #fdf2f2; border: 2px solid #e74c3c; }
+        .result-main { font-size: 1.6em; font-weight: bold; color: #c0392b; margin-bottom: 10px; }
+        .result-sub { font-size: 1.1em; color: #2c3e50; }
+        #chart-container { margin-top: 40px; height: 400px; }
+        .info-text { font-size: 0.85em; color: #7f8c8d; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Alkoholilaskuri</h1>
+    
+    <div class="grid">
+        <div>
+            <label>Sukupuoli</label>
+            <select id="gender">
+                <option value="0.68">Mies</option>
+                <option value="0.55">Nainen</option>
+            </select>
+        </div>
+        <div>
+            <label>Paino (kg)</label>
+            <input type="number" id="weight" value="80">
+        </div>
+        <div>
+            <label>Aloitus (klo 0-23)</label>
+            <input type="number" id="startTime" min="0" max="23" value="16">
+        </div>
+        <div>
+            <label>Lopetus (klo 0-23)</label>
+            <input type="number" id="endTime" min="0" max="23" value="02">
+        </div>
+    </div>
+
+    <div id="drinkList">
+        <label>Juomat:</label>
+        <div class="drink-row">
+            <select class="drink-type">
+                <option value="2.7">Ykkösolut (2.7%)</option>
+                <option value="4.5">Mieto olut / Siideri (4.5%)</option>
+                <option value="5.5" selected>A-Olut / Lonkero (5.5%)</option>
+                <option value="12">Viini (12%)</option>
+                <option value="21">Väkevä viini (21%)</option>
+                <option value="40">Viina (40%)</option>
+            </select>
+            <select class="drink-size">
+                <option value="40">40 ml</option>
+                <option value="100">100 ml</option>				
+                <option value="330" selected>330 ml</option>
+                <option value="500">500 ml</option>
+                <option value="100">100 ml</option>
+                <option value="750">750 ml</option>
+            </select>
+            <input type="number" class="drink-count" value="1" min="1">
+        </div>
+    </div>
+    
+    <button class="btn-add" onclick="addDrinkRow()">+ Lisää uusi juoma</button>
+    <button class="btn-calc" onclick="calculate()">LASKE PROMILLEMÄÄRÄ</button>
+
+    <div class="result-box" id="resultContainer">
+        <div class="result-main" id="peakResult"></div>
+        <div class="result-sub" id="zeroResult"></div>
+    </div>
+
+    <div id="chart-container">
+        <canvas id="alcoholChart"></canvas>
+    </div>
+</div>
+
+<script>
+    let myChart;
+
+    function addDrinkRow() {
+        const firstRow = document.querySelector('.drink-row');
+        const newRow = firstRow.cloneNode(true);
+        newRow.querySelector('.drink-count').value = 1;
+        document.getElementById('drinkList').appendChild(newRow);
+    }
+
+    function calculate() {
+        const weight = parseFloat(document.getElementById('weight').value);
+        const r = parseFloat(document.getElementById('gender').value);
+        let start = parseInt(document.getElementById('startTime').value);
+        let end = parseInt(document.getElementById('endTime').value);
+        
+        let actualEnd = (end <= start) ? end + 24 : end;
+
+        let totalGrams = 0;
+        document.querySelectorAll('.drink-row').forEach(row => {
+            const vol = parseFloat(row.querySelector('.drink-type').value) / 100;
+            const size = parseFloat(row.querySelector('.drink-size').value);
+            const count = parseInt(row.querySelector('.drink-count').value);
+            totalGrams += (size * count * vol * 0.789);
+        });
+
+        const duration = actualEnd - start;
+        const burnRate = 0.15; 
+        const gramsPerHour = totalGrams / duration;
+        
+        let labels = [];
+        let data = [];
+        let currentGramsInBody = 0;
+        let maxPromilles = 0;
+        let zeroHour = -1;
+
+        // Lasketaan pidemmälle (48h), jotta nollapiste löytyy varmasti
+        for (let t = 0; t <= 48; t++) {
+            const currentTime = start + t;
+            
+            if (t < duration) {
+                currentGramsInBody += gramsPerHour;
+            }
+
+            let promilles = currentGramsInBody / (weight * r);
+            promilles -= (burnRate * t);
+            if (promilles < 0) promilles = 0;
+
+            // Tallennetaan vain 24h graafiin, mutta lasketaan nollapistettä pidemmälle
+            if (t <= 24) {
+                labels.push((currentTime % 24).toString().padStart(2, '0') + ":00");
+                data.push(promilles.toFixed(2));
+            }
+            
+            if (promilles > maxPromilles) maxPromilles = promilles;
+            
+            // Etsitään nollapiste (ensimmäinen kerta kun promillet on 0 huipun jälkeen)
+            if (zeroHour === -1 && promilles === 0 && t > 0) {
+                zeroHour = t;
+            }
+        }
+
+        const resContainer = document.getElementById('resultContainer');
+        const peakBox = document.getElementById('peakResult');
+        const zeroBox = document.getElementById('zeroResult');
+        
+        resContainer.style.display = 'block';
+        peakBox.innerText = `Huippulukema: n. ${maxPromilles.toFixed(2)} ‰`;
+        
+        if (zeroHour !== -1) {
+            const zeroClock = (start + zeroHour) % 24;
+            const timeString = zeroClock.toString().padStart(2, '0') + ":00";
+            zeroBox.innerHTML = `Alkoholi poistunut verestä: <b>klo ${timeString}</b><br><small>(${zeroHour} tuntia aloituksesta)</small>`;
+        }
+
+        updateChart(labels, data);
+    }
+
+    function updateChart(labels, data) {
+        const ctx = document.getElementById('alcoholChart').getContext('2d');
+        if (myChart) myChart.destroy();
+
+        myChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Promillet (‰)',
+                    data: data,
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, suggestedMax: 1.0 },
+                    x: { ticks: { autoSkip: false } }
+                }
+            }
+        });
+    }
+
+    window.onload = calculate;
+</script>
+
+</body>
+</html>
